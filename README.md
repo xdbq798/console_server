@@ -117,6 +117,9 @@ bash scripts/start.sh prod --docker up -d --build
 | `RELOAD` | 仅开发默认开启；其他环境必须关闭 |
 | `WORKERS` | `1`；热更新开启时必须为 `1` |
 | `LOG_LEVEL` | Uvicorn 日志等级，默认 `info`；应用日志继续用 `GLOBAL_LOG_LEVEL` 等配置 |
+| `LOG_FORMAT` | 应用日志输出格式：默认彩色文本，设为 `json` 输出结构化 JSON（便于集中采集） |
+| `GLOBAL_LOG_LEVEL` | 应用日志全局等级，默认 `INFO`；各模块可用 `CONFIG_LOG_LEVEL`、`DB_LOG_LEVEL`、`MAIN_LOG_LEVEL`、`SOCKET_LOG_LEVEL`、`OAUTH_LOG_LEVEL` 单独覆盖 |
+| `NO_COLOR` | 设为任意值时禁用日志彩色输出（Docker 内自动禁用） |
 | `FORWARDED_ALLOW_IPS` | 默认 `127.0.0.1`，可填写反向代理的 IP / 网段 |
 | `ENV_FILE` | 显式指定配置文件 |
 | `PYTHON_BIN` | 显式指定 Python；否则依次使用已激活的虚拟环境、项目 `.venv`、系统 `python3` |

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://postgres:123456@localhost:5432/console_local_db"
     )
 
+    # Redis 配置（token 黑名单快速路径等）；默认空 = 禁用，业务自动降级到数据库路径。
+    # 与 DATABASE_URL 不同，Redis 缺失是安全状态，无需强校验。
+    REDIS_URL: str = ""
+
     # DeepSeek 凭证仅用于后端请求，不出现在响应和配置日志中。
     DEEPSEEK_API_KEY: SecretStr = Field(default=SecretStr(""), repr=False)
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"

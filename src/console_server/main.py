@@ -1,48 +1,36 @@
 # ✅ 先导入标准库和第三方库
 import os
-import sys
-from colorama import init
+
+# 日志初始化必须在所有本地/第三方模块导入之前调用，
+# 否则 uvicorn、apscheduler 等库的日志不会被拦截收编。
+from console_server.core.logger import setup_logging
+
+setup_logging()
+
+from loguru import logger
 from console_server.core.config import settings
-from console_server.env import GLOBAL_LOG_LEVEL, SRC_LOG_LEVELS
 from console_server.middleware.auth import AuthMiddleware
-from console_server.utils.console import (
-    print_success,
-    print_info,
-    print_warn,
-)
-
-# 如果 RUNNING_IN_DOCKER 或 NO_COLOR 被设置，禁用颜色
-# docker run -e NO_COLOR=1 <IMAGE>
-if os.getenv("NO_COLOR") or os.getenv("RUNNING_IN_DOCKER"):
-    init(strip=True, convert=False)  # 强制剥离 ANSI 码
-else:
-    # 初始化 colorama（autoreset=True 表示每次 print 后自动重置样式）
-    init(autoreset=True)
-
+from console_server.middleware.request_logging import RequestLoggingMiddleware
 
 env = settings.ENV
 _debug = settings.DEBUG
 
-print_info(f"版本: {settings.APP_VERSION}")
-print_info(f"环境: {env}")
-print_info(f"DEBUG: {_debug}")
+log = logger.bind(log_source="main")
+
+log.info(f"版本: {settings.APP_VERSION}")
+log.info(f"环境: {env}")
+log.info(f"DEBUG: {_debug}")
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-import logging
 
 # ✅ 第二步：导入本地模块（必须放在前面）
 from .db import database
+from .core import redis as redis_module
 from .api.router import router
 from .utils import auth
-from .core.config import settings
-
-# 配置日志
-logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
-log = logging.getLogger(__name__)
-log.setLevel(SRC_LOG_LEVELS["MAIN"])
 
 
 # 创建全局调度器
@@ -59,17 +47,25 @@ async def cleanup_expired_tokens_task():
             else:
                 log.debug("定时任务：没有需要清理的过期 token")
     except Exception as e:
-        log.error(f"定时任务执行失败：{str(e)}", exc_info=True)
+        log.exception(f"定时任务执行失败：{e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print_success("✅ 应用启动中")
+    log.success("✅ 应用启动中")
     if env == "dev":
-        print_warn("请执行 sql/init.sql 初始化数据库")
+        log.warning("请执行 sql/init.sql 初始化数据库")
+
+    # Redis：启动时验证连通性；失败降级为数据库路径，不阻塞启动
+    if await redis_module.check_redis():
+        log.success(f"✅ Redis 已连接：{redis_module.REDIS_URL}")
+    elif redis_module.REDIS_URL:
+        log.warning("Redis 不可用，token 黑名单等业务降级为数据库路径")
+    else:
+        log.info("Redis 未配置，已禁用")
 
     # 启动定时任务
-    print_success("✅ 应用启动：启动定时任务")
+    log.success("✅ 应用启动：启动定时任务")
     scheduler.add_job(
         cleanup_expired_tokens_task,
         trigger=IntervalTrigger(hours=settings.CLEANUP_EXPIRED_TOKENS_INTERVAL_HOURS),
@@ -78,16 +74,17 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.start()
-    print_info(
+    log.info(
         f"✅ 定时任务已启动：每 {settings.CLEANUP_EXPIRED_TOKENS_INTERVAL_HOURS} 小时执行一次清理"
     )
 
     yield
 
     # 关闭调度器
-    print_info("应用关闭：停止定时任务")
+    log.info("应用关闭：停止定时任务")
     scheduler.shutdown(wait=False)
-    print_info("应用关闭：目前无额外清理任务")
+    await redis_module.close_redis()
+    log.info("应用关闭：Redis 连接已释放")
 
 
 # ✅ 定义 FastAPI 应用
@@ -99,7 +96,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _debug else None,
 )
 
-# 添加中间件
+# 添加中间件（后注册的先执行：请求日志 → 认证 → 业务）
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(router, prefix=settings.API_STR)

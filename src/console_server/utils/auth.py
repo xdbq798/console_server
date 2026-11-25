@@ -17,6 +17,7 @@ from console_server.model.rbac import User, Role
 from console_server.model.token import TokenBlacklist
 from console_server.model.auth_session import AuthSession
 from console_server.core.config import settings
+from console_server.core import redis as redis_module
 from console_server.core.permissions import has_permission, can_grant
 
 
@@ -171,11 +172,13 @@ async def add_token_to_blacklist(
         )
         db.add(blacklist_entry)
         await db.commit()
+        # 写穿透到 Redis 快速路径；失败仅降级，不影响数据库事实源
+        await redis_module.cache_token_blacklist(token_hash, expires_at)
 
 
 async def is_token_blacklisted(token: str, db: AsyncSession) -> bool:
     """
-    检查 token 是否在黑名单中
+    检查 token 是否在黑名单中（Redis 快速路径优先，数据库兜底）
 
     Args:
         token: JWT token 字符串
@@ -185,6 +188,9 @@ async def is_token_blacklisted(token: str, db: AsyncSession) -> bool:
         True 如果 token 在黑名单中，False 否则
     """
     token_hash = get_token_hash(token)
+    # Redis 命中即拉黑；未命中不能下结论，继续查数据库
+    if await redis_module.is_token_blacklisted_cached(token_hash):
+        return True
     result = await db.execute(
         select(TokenBlacklist).where(
             TokenBlacklist.token_hash == token_hash,
@@ -253,6 +259,10 @@ async def _get_user_from_token(token: str, db: AsyncSession, *, expected_use: st
     except JWTError:
         raise credentials_exception
 
+    # Redis 快速路径：命中黑名单直接拒绝，省去数据库查询；未命中继续走数据库兜底
+    if await redis_module.is_token_blacklisted_cached(get_token_hash(token)):
+        raise credentials_exception
+
     # 用户、会话和黑名单合并查询；角色和权限仍按请求读取，不缓存授权状态。
     now = datetime.now(timezone.utc)
     result = await db.execute(
@@ -316,6 +326,9 @@ async def rotate_session(refresh_token: str, db: AsyncSession) -> tuple[AuthSess
         payload = decode_token(refresh_token, "refresh")
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="刷新凭证无效，请重新登录") from exc
+    # Redis 快速路径：旧刷新令牌已拉黑时直接按重放处理
+    if await redis_module.is_token_blacklisted_cached(get_token_hash(refresh_token)):
+        raise HTTPException(status_code=401, detail="检测到刷新令牌重复使用，会话已撤销")
     # 所有签发路径先锁用户、再锁会话，与改密/停用触发器使用相同顺序。
     result = await db.execute(select(User).where(User.uuid == UUID(payload["sub"]))
                               .with_for_update().execution_options(populate_existing=True))

@@ -1,16 +1,15 @@
 ####################################
 # LOGGING
 ####################################
+# 日志初始化已迁移到 core/logger.py（loguru）。
+# 本文件保留 GLOBAL_LOG_LEVEL 与 SRC_LOG_LEVELS 的定义，
+# 供各模块通过 module_logger(source) 使用对应等级。
 
 import logging
 import os
-import sys
-
 
 GLOBAL_LOG_LEVEL = os.environ.get("GLOBAL_LOG_LEVEL", "").upper()
-if GLOBAL_LOG_LEVEL in logging.getLevelNamesMapping():
-    logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL, force=True)
-else:
+if GLOBAL_LOG_LEVEL not in logging.getLevelNamesMapping():
     GLOBAL_LOG_LEVEL = "INFO"
 
 log = logging.getLogger(__name__)
