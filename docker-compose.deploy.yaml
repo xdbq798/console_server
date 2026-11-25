@@ -1,5 +1,24 @@
 # 通过 bash scripts/start.sh pre/prod --docker 启动，统一加载环境和端口。
 services:
+  # 缓存 / token 黑名单（仅 compose 内部网络访问，不映射宿主机端口）
+  redis:
+    image: redis:7-alpine
+    # REDIS_PASSWORD 必须在部署 env 文件（.env.prod / .env.pre）中设置；AOF 开启保证重启不丢数据
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?请在部署 env 文件中设置 REDIS_PASSWORD}"]
+    environment:
+      # 供 healthcheck 内部引用（$$REDIS_PASSWORD）
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      # 按环境隔离数据目录（.env.prod / .env.pre 已定义 ENV=prod / pre）
+      - ~/redis-${ENV:-prod}-data:/data
+    healthcheck:
+      # $$ 转义为容器内环境变量，避免密码落入插值后的检查命令
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
   backend:
     image: ${CONSOLE_IMAGE:-console-server:local}
     build:
@@ -52,6 +71,10 @@ services:
       - WEBSOCKET_REDIS_LOCK_TIMEOUT
       - WEBSOCKET_SENTINEL_HOSTS
       - WEBSOCKET_SENTINEL_PORT
+    depends_on:
+      # Redis 未就绪前不启动 backend；连接失败时代码仍会降级为数据库路径
+      redis:
+        condition: service_healthy
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-${PORT:?PORT 未设置，请通过 scripts/start.sh 环境 --docker 启动}}:${PORT:?PORT 未设置}"
     restart: unless-stopped
