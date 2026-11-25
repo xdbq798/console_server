@@ -25,7 +25,12 @@ async def require_chat_access(request: Request, token: str = Depends(oauth2_sche
         await check_chat_permission(user)
 
 
-@router.post("/stream", dependencies=[Depends(require_chat_access)])
+@router.post(
+    "/stream",
+    summary="流式对话",
+    description="调用大模型并以 SSE 流式返回对话内容",
+    dependencies=[Depends(require_chat_access)],
+)
 async def chat_stream(body: ChatRequest):
     # 先连接和检查上游，确保配置、额度等错误能以正常 HTTP 状态返回。
     upstream = await open_chat_stream(body)

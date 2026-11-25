@@ -204,7 +204,12 @@ async def clean_up_expired_tokens(
         )
 
 
-@auth_router.post("/refresh", response_model=Token)
+@auth_router.post(
+    "/refresh",
+    summary="刷新访问令牌",
+    description="使用 HttpOnly Refresh Cookie 轮换会话并签发新的访问令牌",
+    response_model=Token,
+)
 async def refresh_token(request: Request, response: Response,
                         db: AsyncSession = Depends(database.get_db)):
     validate_cookie_request(request)

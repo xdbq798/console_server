@@ -482,7 +482,11 @@ async def delete_user_roles(
     return SuccessResponse()
 
 
-@router.get("/{user_id}/role-options", response_model=UserRoleOptionsResponse)
+@router.get(
+    "/{user_id}/role-options",
+    summary="获取用户角色选项",
+    response_model=UserRoleOptionsResponse,
+)
 async def get_user_role_options(
     user_id: int,
     current_user: User = Depends(require_any_permission(USER_GET_API, USER_ASSIGN_ROLE_API)),

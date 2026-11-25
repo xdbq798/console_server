@@ -413,7 +413,11 @@ async def update_role(
     return SuccessResponse()
 
 
-@router.get("/{role_id}/permission-options", response_model=RolePermissionOptionsResponse)
+@router.get(
+    "/{role_id}/permission-options",
+    summary="获取角色权限选项",
+    response_model=RolePermissionOptionsResponse,
+)
 async def get_role_permission_options(
     role_id: int = Path(ge=1),
     current_user: User = Depends(require_any_permission(ROLE_GET_API, ROLE_ASSIGN_PERMISSION_API)),
@@ -440,7 +444,11 @@ async def get_role_permission_options(
     )
 
 
-@router.get("/{role_id}/users", response_model=PaginatedResponse[UserInfoResponse])
+@router.get(
+    "/{role_id}/users",
+    summary="获取角色关联用户",
+    response_model=PaginatedResponse[UserInfoResponse],
+)
 async def get_role_users(
     role_id: int = Path(ge=1),
     current_user: User = Depends(require_permission(ROLE_PATH, ROLE_GET_API)),

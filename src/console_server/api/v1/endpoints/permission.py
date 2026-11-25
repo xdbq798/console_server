@@ -329,16 +329,39 @@ async def get_permission(
     return (await permission_responses(db, [permission]))[0]
 
 
-@router.get("/{permission_id}/roles", response_model=PaginatedResponse[RoleResponse])
+@router.get(
+    "/{permission_id}/roles",
+    summary="分页查看引用角色",
+    description="分页查看引用该权限的角色列表，额外需要角色查询或角色授权权限",
+    response_model=PaginatedResponse[RoleResponse],
+)
 async def get_permission_roles(
     permission_id: int,
     current_user: User = Depends(require_permission(PERMISSION_PATH, PERMISSION_GET_API)),
     role_reader: User = Depends(require_any_permission(ROLE_GET_API, ROLE_ASSIGN_PERMISSION_API)),
     db: AsyncSession = Depends(database.get_db),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(
+        settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE,
+        description="每页数量，上限为系统最大分页大小",
+    ),
 ) -> PaginatedResponse[RoleResponse]:
-    """分页查看引用角色；同时要求角色查询或授权能力，解除关联沿用角色设置接口。"""
+    """分页查看引用该权限的角色；同时要求角色查询或角色授权权限。
+
+    Args:
+        permission_id: 待查询的权限ID。
+        current_user: 通过登录认证且具备权限查询能力的当前用户。
+        role_reader: 具备角色查询或角色授权能力之一的当前用户。
+        db: 由依赖注入提供的异步数据库会话。
+        page: 页码，从 1 开始，默认第 1 页。
+        page_size: 每页数量，默认取系统配置，上限为系统最大分页大小。
+
+    Returns:
+        引用该权限的角色分页列表。
+
+    Raises:
+        HTTPException: 权限不存在时返回 404。
+    """
     if (await db.execute(select(Permission.id).where(Permission.id == permission_id))).scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission not found")
     condition = role_permissions.c.permission_id == permission_id
