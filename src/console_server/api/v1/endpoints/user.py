@@ -43,6 +43,10 @@ from console_server.core.config import settings
 from console_server.schema.search import UserSearchParams
 from console_server.utils.search import build_search_filters
 from console_server.utils.associations import role_responses
+from console_server.api.v1.endpoints.notifications import (
+    notify_user_deactivated_to_self,
+    notify_user_status_to_admins,
+)
 
 
 router = APIRouter(prefix=f"/{USER_PATH}", tags=[USER_PATH])
@@ -184,6 +188,7 @@ async def update_user(
     """编辑用户，保留未提交的密码并验证账号保护和邮箱唯一性。"""
     user = await _get_user_or_404(user_id, db, for_update=True)
     _ensure_editable(user, current_user, user_request.is_active)
+    status_changed = bool(user.is_active) != user_request.is_active
     result = await db.execute(
         select(User).where(
             func.lower(User.email) == str(user_request.email).lower(),
@@ -196,7 +201,7 @@ async def update_user(
         )
 
     values = user_request.model_dump(exclude={"password"})
-    if bool(user.is_active) != user_request.is_active:
+    if status_changed:
         db.add(AuthorizationAudit(
             actor_id=current_user.id, target_type="user", target_id=user.id,
             action="set-active", before={"is_active": bool(user.is_active)},
@@ -210,6 +215,15 @@ async def update_user(
     db.add(user)
     await _commit_user_changes(db)
     await db.refresh(user)
+    if status_changed:
+        # 提交成功后通知全局管理员（内部异常不影响本次操作结果）
+        await notify_user_status_to_admins(
+            db, actor_name=current_user.name, target_name=user.name,
+            is_active=user_request.is_active,
+        )
+        if not user_request.is_active:
+            # 停用时通知本人并让前端强制登出
+            await notify_user_deactivated_to_self(user, actor_name=current_user.name)
     return _user_detail(await _get_user_or_404(user_id, db))
 
 
@@ -271,7 +285,8 @@ async def disable_user(
     await _get_roles_by_ids([cast(int, role.id) for role in user.roles], db, for_update=True)
     is_active = role_request.is_active
     _ensure_editable(user, current_user, is_active)
-    if bool(user.is_active) != is_active:
+    status_changed = bool(user.is_active) != is_active
+    if status_changed:
         db.add(AuthorizationAudit(
             actor_id=current_user.id, target_type="user", target_id=user.id,
             action="set-active", before={"is_active": bool(user.is_active)},
@@ -279,6 +294,15 @@ async def disable_user(
         ))
     await db.execute(update(User).where(User.id == user_id).values(is_active=is_active))
     await _commit_user_changes(db)
+    if status_changed:
+        # 提交成功后通知全局管理员（内部异常不影响本次操作结果）
+        await notify_user_status_to_admins(
+            db, actor_name=current_user.name, target_name=user.name,
+            is_active=is_active,
+        )
+        if not is_active:
+            # 停用时通知本人并让前端强制登出
+            await notify_user_deactivated_to_self(user, actor_name=current_user.name)
     return SuccessResponse()
 
 

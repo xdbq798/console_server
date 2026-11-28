@@ -9,12 +9,14 @@ MODULE_ACTIONS = {
     "user": ("read", "create", "update", "delete", "assign-role"),
     "role": ("read", "create", "update", "delete", "assign-permission"),
     "permission": ("read", "create", "update", "delete"),
+    "upload": ("use",),
 }
 MENU_READ_PERMISSIONS = {
     "menu:chat": "api:chat:use",
     "menu:user": "api:user:read",
     "menu:role": "api:role:read",
     "menu:permission": "api:permission:read",
+    "menu:upload": "api:upload:use",
 }
 PERMISSION_CODE_PATTERN = re.compile(
     r"^(?:api:\*|api:[a-z][a-z0-9_-]*:(?:\*|[a-z][a-z0-9_-]*(?:,[a-z][a-z0-9_-]*)*)"

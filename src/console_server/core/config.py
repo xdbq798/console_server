@@ -1,5 +1,7 @@
 from console_server.utils.get_version import read_pyproject_version
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, Field, SecretStr, field_validator, model_validator
 
@@ -70,9 +72,20 @@ class Settings(BaseSettings):
     # 定时任务配置
     CLEANUP_EXPIRED_TOKENS_INTERVAL_HOURS: int = 24  # 清理过期 token 的间隔（小时）
 
+    # WebSocket（Socket.IO）配置：挂载路径为 /{WS_PATH}，客户端连接同路径
+    WS_PATH: str = "socket.io"
+
     # 分页配置
     DEFAULT_PAGE_SIZE: int = 10
     MAX_PAGE_SIZE: int = 100
+
+    # 断点续传 / 秒传配置
+    # 存储根目录：chunks/（分片与会话临时产物）与 files/（合并后文件）的父目录。
+    UPLOAD_DIR: str = str(Path(__file__).resolve().parents[3] / "storage")
+    UPLOAD_CHUNK_SIZE: int = 5 * 1024 * 1024          # 默认切片大小（5MB）
+    UPLOAD_MAX_FILE_SIZE: int = 2 * 1024 * 1024 * 1024  # 单文件上限（2GB）
+    UPLOAD_SESSION_EXPIRE_HOURS: int = 24             # 未合并会话过期时间
+    UPLOAD_CLEANUP_INTERVAL_HOURS: int = 6            # 过期清理任务执行间隔
 
 
 settings = Settings()

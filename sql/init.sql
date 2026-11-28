@@ -596,3 +596,61 @@ SELECT r.id, p.id FROM public.roles r CROSS JOIN public.permissions p
 WHERE r.name = 'ai_user' AND p.name IN ('api:chat:use', 'menu:chat')
 ON CONFLICT DO NOTHING;
 COMMIT;
+
+
+-- ----------------------------
+-- 断点续传 + 秒传
+-- upload_sessions：上传会话（fileHash 维度；重复 init 校验元信息一致后复用）
+-- upload_chunks：已收分片（PK 去重，重复分片幂等）
+-- upload_files：秒传索引（merge 成功才写入，独立于会话生命周期）
+-- ----------------------------
+BEGIN;
+CREATE TABLE IF NOT EXISTS upload_sessions (
+    file_hash   VARCHAR(32) PRIMARY KEY,
+    file_name   VARCHAR(512) NOT NULL,
+    file_size   BIGINT NOT NULL,
+    chunk_size  INTEGER NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    total_hash  VARCHAR(32) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    merged      BOOLEAN NOT NULL DEFAULT FALSE,
+    merged_path VARCHAR(1024),
+    last_error  VARCHAR(256)
+);
+
+CREATE TABLE IF NOT EXISTS upload_chunks (
+    file_hash   VARCHAR(32) NOT NULL REFERENCES upload_sessions(file_hash) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    chunk_hash  VARCHAR(32) NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (file_hash, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS upload_files (
+    file_hash  VARCHAR(32) PRIMARY KEY,
+    path       VARCHAR(1024) NOT NULL,
+    file_name  VARCHAR(512) NOT NULL,
+    size       BIGINT NOT NULL,
+    merged_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+COMMIT;
+
+
+-- 断点续传菜单与上传接口权限、独立角色。
+-- admin 角色通过 menu:* / api:* 通配自动覆盖。
+BEGIN;
+INSERT INTO public.permissions (name, display_name, description, is_editable, is_deletable)
+VALUES ('api:upload:use', '断点续传：使用', '调用断点续传上传接口（init/check/chunk/merge/download）', false, false)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO public.permissions (name, display_name, description, is_editable, is_deletable)
+VALUES ('menu:upload', '断点续传菜单', '断点续传演示页菜单可见性', false, false)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO public.roles (name, display_name, description, is_active, is_editable, is_deletable)
+VALUES ('upload_user', '断点续传用户', '允许使用断点续传上传功能', true, true, false)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO public.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM public.roles r CROSS JOIN public.permissions p
+WHERE r.name = 'upload_user' AND p.name IN ('api:upload:use', 'menu:upload')
+ON CONFLICT DO NOTHING;
+COMMIT;

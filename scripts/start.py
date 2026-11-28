@@ -105,7 +105,7 @@ def main() -> None:
         parser.error("缺少 uvicorn，请先执行 uv sync 或安装项目依赖。")
 
     command = [
-        sys.executable, "-m", "uvicorn", "console_server.main:app",
+        sys.executable, "-m", "uvicorn", "console_server.main:socket_app",
         "--app-dir", str(PROJECT_ROOT / "src"),
         "--host", host, "--port", str(port),
         "--forwarded-allow-ips", os.environ["FORWARDED_ALLOW_IPS"],

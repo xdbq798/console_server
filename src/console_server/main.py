@@ -27,10 +27,16 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 # ✅ 第二步：导入本地模块（必须放在前面）
+from socketio import ASGIApp as SocketASGIApp
+
 from .db import database
 from .core import redis as redis_module
 from .api.router import router
+from .services import upload as upload_service
+from .services.upload import ensure_upload_dirs
 from .utils import auth
+from .ws.server import sio
+from .ws import events  # noqa: F401  导入即注册 connect/disconnect 等事件处理器
 
 
 # 创建全局调度器
@@ -48,6 +54,19 @@ async def cleanup_expired_tokens_task():
                 log.debug("定时任务：没有需要清理的过期 token")
     except Exception as e:
         log.exception(f"定时任务执行失败：{e}")
+
+
+async def cleanup_upload_sessions_task():
+    """定时清理过期上传会话与已合并会话的分片目录（秒传索引不受影响）"""
+    try:
+        async with database.AsyncSessionLocal() as db:
+            removed = await upload_service.cleanup_expired_sessions(db)
+            if removed > 0:
+                log.info(f"定时任务：清理了 {removed} 个过期上传会话")
+            else:
+                log.debug("定时任务：没有需要清理的过期上传会话")
+    except Exception as e:
+        log.exception(f"上传会话清理任务执行失败：{e}")
 
 
 @asynccontextmanager
@@ -73,10 +92,22 @@ async def lifespan(app: FastAPI):
         name="清理过期 token",
         replace_existing=True,
     )
+    scheduler.add_job(
+        cleanup_upload_sessions_task,
+        trigger=IntervalTrigger(hours=settings.UPLOAD_CLEANUP_INTERVAL_HOURS),
+        id="cleanup_upload_sessions",
+        name="清理过期上传会话",
+        replace_existing=True,
+    )
     scheduler.start()
     log.info(
-        f"✅ 定时任务已启动：每 {settings.CLEANUP_EXPIRED_TOKENS_INTERVAL_HOURS} 小时执行一次清理"
+        f"✅ 定时任务已启动：每 {settings.CLEANUP_EXPIRED_TOKENS_INTERVAL_HOURS} 小时执行一次 token 清理，"
+        f"每 {settings.UPLOAD_CLEANUP_INTERVAL_HOURS} 小时执行一次上传会话清理"
     )
+
+    # 上传存储目录 + 启动时执行一次过期清理（对应原方案的启动 sweep）
+    ensure_upload_dirs()
+    await cleanup_upload_sessions_task()
 
     yield
 
@@ -101,3 +132,10 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(router, prefix=settings.API_STR)
+
+# WebSocket：用 Socket.IO 的 ASGIApp 包裹整个应用并作为 uvicorn 入口
+# （scripts/start.py 启动 console_server.main:socket_app）。
+# /{WS_PATH} 路径由 Socket.IO 处理，其余请求转发给 app；
+# Socket.IO 握手不经过 AuthMiddleware，认证在 connect 事件中独立完成。
+socket_app = SocketASGIApp(sio, other_asgi_app=app, socketio_path=settings.WS_PATH)
+log.success(f"✅ WebSocket 已就绪：/{settings.WS_PATH}")
